@@ -1,12 +1,34 @@
 use core::num;
 
 use petgraph::{
+    adj::NodeIndex,
     data::Build,
     dot::Dot,
-    graph::EdgeIndex,
-    graph::{DiGraph, UnGraph},
+    graph::{DiGraph, EdgeIndex, UnGraph},
 };
 use rand::distributions::{Distribution, Uniform};
+
+fn build_gomory_hu_tree() {
+    unimplemented!();
+}
+
+struct Partition<N, E> {
+    source: DiGraph<N, E>,
+    sink: DiGraph<N, E>,
+}
+struct MinCut<N, E> {
+    flow_value: u32,
+    partition: Partition<N, E>,
+}
+
+fn find_min_cut(
+    g: &UnGraph<String, u32>,
+    source: NodeIndex,
+    sink: NodeIndex,
+    r: DiGraph<String, u32>,
+) -> MinCut<String, u32> {
+    unimplemented!()
+}
 
 // Creates an initial residual network for an undirected graph
 fn init_residual_network(g: &UnGraph<String, u32>) -> DiGraph<String, u32> {
