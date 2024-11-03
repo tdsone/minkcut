@@ -1,64 +1,85 @@
-use petgraph::algo;
-use petgraph::graph::{Graph, UnGraph};
-use petgraph::prelude::*;
+use core::num;
 
-use petgraph::dot::{Config, Dot};
-use std::fs::File;
-use std::io::Write;
+use petgraph::{
+    data::Build,
+    dot::Dot,
+    graph::EdgeIndex,
+    graph::{DiGraph, UnGraph},
+};
+use rand::distributions::{Distribution, Uniform};
 
-struct MinKCut {
-    graph: UnGraph<(), f64>,
-}
+// Creates an initial residual network for an undirected graph
+fn init_residual_network(g: &UnGraph<String, u32>) -> DiGraph<String, u32> {
+    let mut r = DiGraph::<String, u32>::new();
 
-impl MinKCut {
-    fn new() -> Self {
-        MinKCut {
-            graph: UnGraph::new_undirected(),
+    let node_indices = g.node_indices().collect::<Vec<_>>();
+
+    // Add all nodes from g to r
+    for node in node_indices {
+        let sequence = g[node].clone();
+        r.add_node(sequence);
+    }
+
+    // Extract edges with positive capacities
+    let edges = g.edge_indices().collect::<Vec<_>>();
+
+    for edge in edges {
+        let (u, v) = g.edge_endpoints(edge).unwrap();
+
+        if *g.edge_weight(edge).unwrap() > 0 && u != v {
+            r.add_edge(u, v, *g.edge_weight(edge).unwrap());
+            r.add_edge(v, u, *g.edge_weight(edge).unwrap());
         }
     }
 
-    fn add_node(&mut self) -> NodeIndex {
-        self.graph.add_node(())
+    r
+}
+
+fn random_dna(length: u8) -> String {
+    let mut rng = rand::thread_rng();
+    let rand_distr = Uniform::from(0..4);
+
+    let nucleotides: [&str; 4] = ["A", "C", "G", "T"];
+
+    let mut sequence = String::new();
+    for _ in 0..length {
+        let nt = nucleotides[rand_distr.sample(&mut rng)];
+        sequence.push_str(nt);
     }
 
-    fn add_edge(&mut self, from: NodeIndex, to: NodeIndex, weight: f64) {
-        self.graph.add_edge(from, to, weight);
+    sequence
+}
+
+fn build_graph(num_nodes: i32) -> UnGraph<String, u32> {
+    let num_nodes = 10;
+    let mut g = UnGraph::<String, u32>::new_undirected();
+
+    let mut rng = rand::thread_rng();
+    let rand_distr = Uniform::from(0..100);
+
+    for _ in 0..num_nodes {
+        let seq = random_dna(10);
+        g.add_node(seq);
     }
 
-    fn remove_edge(&mut self, from: NodeIndex, to: NodeIndex) {
-        if let Some(edge) = self.graph.find_edge(from, to) {
-            self.graph.remove_edge(edge);
+    let indexes = g.node_indices().collect::<Vec<_>>();
+    for i in 0..num_nodes {
+        for j in i + 1..num_nodes {
+            g.add_edge(indexes[i], indexes[j], rand_distr.sample(&mut rng));
         }
     }
 
-    fn export_dot(&self, filename: &str) -> std::io::Result<()> {
-        let dot = format!(
-            "{:?}",
-            Dot::with_config(&self.graph, &[Config::EdgeNoLabel])
-        );
-        let mut file = File::create(filename)?;
-        file.write_all(dot.as_bytes())?;
-        Ok(())
-    }
-}
-
-fn approx_saran_vazirani(graph: &MinKCut, k: usize) {
-    // TODO: Implement Saran-Vazirani approximation algorithm
-    println!("Implementing Saran-Vazirani approximation for k = {}", k);
+    g
 }
 
 fn main() {
-    let mut min_k_cut = MinKCut::new();
+    // Create dummy fully connected undirected graph with positive edge weights
 
-    // Create sample graph
-    let n1 = min_k_cut.add_node();
-    let n2 = min_k_cut.add_node();
-    let n3 = min_k_cut.add_node();
+    let g = build_graph(10);
 
-    min_k_cut.add_edge(n1, n2, 2.0);
-    min_k_cut.add_edge(n2, n3, 3.0);
-    min_k_cut.add_edge(n3, n1, 1.0);
+    println!("{}", Dot::new(&g));
 
-    // Export graph
-    min_k_cut.export_dot("graph.dot").unwrap();
+    let r = init_residual_network(&g);
+
+    println!("{}", Dot::new(&r));
 }
