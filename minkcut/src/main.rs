@@ -19,36 +19,31 @@ struct MinCut<N, E> {
     partition: Partition<N, E>,
 }
 
-fn dinitz_bfs(residual: &DiGraphMap<u32, EdgeData>, source: u32, sink: u32) -> Option<Vec<u32>> {
-    let mut parents = std::collections::HashMap::new();
-    let mut vertex_dist = std::collections::HashMap::new();
+fn dinitz_bfs(
+    residual: &DiGraphMap<u32, EdgeData>,
+    source: u32,
+    sink: u32,
+) -> Option<std::collections::HashMap<u32, u32>> {
+    let mut level_graph = std::collections::HashMap::new();
     let mut queue = VecDeque::new();
 
-    vertex_dist.insert(source, 0);
-    queue.push_back((source, 0));
+    level_graph.insert(source, 0);
+    queue.push_back(source);
 
-    while let Some((u, dist)) = queue.pop_front() {
-        if u == sink {
-            break;
-        }
+    while let Some(u) = queue.pop_front() {
+        let u_level = level_graph[&u];
+
         for v in residual.neighbors(u) {
             let edge_data = residual.edge_weight(u, v).unwrap();
-            if edge_data.capacity > edge_data.flow {
-                if let Some(&v_dist) = vertex_dist.get(&v) {
-                    if v_dist == dist + 1 {
-                        parents.entry(v).or_insert_with(Vec::new).push(u);
-                    }
-                } else {
-                    parents.insert(v, vec![u]);
-                    vertex_dist.insert(v, dist + 1);
-                    queue.push_back((v, dist + 1));
-                }
+            if edge_data.capacity > edge_data.flow && !level_graph.contains_key(&v) {
+                level_graph.insert(v, u_level + 1);
+                queue.push_back(v);
             }
         }
     }
 
-    if parents.contains_key(&sink) {
-        Some(parents.into_iter().map(|(k, _)| k).collect())
+    if level_graph.contains_key(&sink) {
+        Some(level_graph)
     } else {
         None
     }
@@ -58,59 +53,69 @@ fn dinitz_dfs(
     residual: &mut DiGraphMap<u32, EdgeData>,
     source: u32,
     sink: u32,
-    parents: &std::collections::HashMap<u32, Vec<u32>>,
+    level_graph: &std::collections::HashMap<u32, u32>,
 ) -> u32 {
-    let mut total_flow = 0;
-    let mut path = vec![sink];
-    let mut u = sink;
+    fn dfs(
+        residual: &mut DiGraphMap<u32, EdgeData>,
+        u: u32,
+        sink: u32,
+        flow: u32,
+        level_graph: &std::collections::HashMap<u32, u32>,
+        visited: &mut std::collections::HashSet<u32>,
+    ) -> u32 {
+        if u == sink {
+            return flow;
+        }
 
-    while !path.is_empty() {
-        if let Some(v_list) = parents.get(&u) {
-            if !v_list.is_empty() {
-                let v = v_list[0];
-                path.push(v);
-            } else {
-                path.pop();
-                if path.is_empty() {
-                    break;
-                }
-                let v = *path.last().unwrap();
-                if let Some(v_list) = parents.get(&v) {
-                    if !v_list.is_empty() {
-                        let mut v_list = v_list.clone();
-                        v_list.remove(0);
-                    }
-                }
-            }
+        visited.insert(u);
 
-            if let Some(&v) = path.last() {
-                if v == source {
-                    let mut flow = u32::MAX;
-                    for window in path.windows(2) {
-                        if let [u, v] = window {
-                            let edge_data = residual.edge_weight(*u, *v).unwrap();
-                            flow = flow.min(edge_data.capacity - edge_data.flow);
+        // Collect neighbors and their data upfront to avoid borrow issues
+        let neighbors: Vec<(u32, u32)> = residual
+            .neighbors(u)
+            .filter_map(|v| {
+                if visited.contains(&v) {
+                    return None;
+                }
+
+                if let (Some(&u_level), Some(&v_level)) = (level_graph.get(&u), level_graph.get(&v))
+                {
+                    if v_level == u_level + 1 {
+                        let edge_data = residual.edge_weight(u, v).unwrap();
+                        let available_flow = edge_data.capacity - edge_data.flow;
+                        if available_flow > 0 {
+                            return Some((v, available_flow));
                         }
                     }
-
-                    for window in path.windows(2).rev() {
-                        if let [u, v] = window {
-                            let edge_data = residual.edge_weight_mut(*v, *u).unwrap();
-                            edge_data.flow += flow;
-                            let edge_data = residual.edge_weight_mut(*u, *v).unwrap();
-                            edge_data.flow -= flow;
-                        }
-                    }
-
-                    total_flow += flow;
-                    path.pop();
                 }
+                None
+            })
+            .collect();
+
+        // Now process each valid neighbor
+        for (v, available_flow) in neighbors {
+            let bottleneck = dfs(
+                residual,
+                v,
+                sink,
+                flow.min(available_flow),
+                level_graph,
+                visited,
+            );
+
+            if bottleneck > 0 {
+                // Update residual network
+                let edge_data = residual.edge_weight_mut(u, v).unwrap();
+                edge_data.flow += bottleneck;
+                let edge_data = residual.edge_weight_mut(v, u).unwrap();
+                edge_data.flow -= bottleneck;
+                return bottleneck;
             }
         }
-        u = *path.last().unwrap_or(&sink);
+        0
     }
 
-    total_flow
+    let mut visited = std::collections::HashSet::new();
+    dfs(residual, source, sink, u32::MAX, level_graph, &mut visited)
 }
 
 // Finds the min_cut for a flow network g using Dinitz Method in O(|E||V|^2)
@@ -130,29 +135,47 @@ fn find_min_cut(
         panic!("Source is equal to sink. There is no min cut.")
     }
 
+    // Compute max flow using Dinitz algorithm
     let mut flow_value = 0;
     loop {
-        let parents = match dinitz_bfs(&residual, source, sink) {
-            Some(p) => p,
+        let level_graph = match dinitz_bfs(&residual, source, sink) {
+            Some(lg) => lg,
             None => break,
         };
 
-        let this_flow = dinitz_dfs(&mut residual, source, sink, &parents);
+        let this_flow = dinitz_dfs(&mut residual, source, sink, &level_graph);
         if this_flow == 0 {
             break;
         }
         flow_value += this_flow;
     }
 
+    // Find reachable nodes from source in residual graph
+    let reachable = dinitz_bfs(&residual, source, sink).unwrap_or_default();
+
+    // Build source and sink partitions based on reachability
     let mut source_partition = DiGraphMap::new();
     let mut sink_partition = DiGraphMap::new();
 
+    // First add all nodes to their respective partitions
     for node in g.nodes() {
-        if dinitz_bfs(&residual, source, node).is_some() {
+        if reachable.contains_key(&node) {
             source_partition.add_node(node);
         } else {
             sink_partition.add_node(node);
         }
+    }
+
+    // Optionally: Add edges between nodes in each partition
+    for (u, v, weight) in g.all_edges() {
+        if reachable.contains_key(&u) && reachable.contains_key(&v) {
+            // Both nodes are in source partition
+            source_partition.add_edge(u, v, *weight);
+        } else if !reachable.contains_key(&u) && !reachable.contains_key(&v) {
+            // Both nodes are in sink partition
+            sink_partition.add_edge(u, v, *weight);
+        }
+        // Edges between partitions are not included as they form the cut
     }
 
     MinCut {
